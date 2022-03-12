@@ -12,15 +12,28 @@ export const getComponentIds = (cmp, res = []) => {
   return res;
 };
 
-const getComponentsFromDefs = (items, all = {}) => {
-  return items.map(item => {
-    const id = item.attributes?.id;
+const getComponentsFromDefs = (items, all = {}, opts = {}) => {
+  const itms = isArray(items) ? items : [items];
+
+  return itms.map(item => {
+    const { attributes = {}, components, tagName } = item;
+    const { id } = attributes;
     let result = item;
 
     if (id && all[id]) {
       result = all[id];
-    } else if (isArray(result.components)) {
-      result.components = getComponentsFromDefs(result.components, all);
+      tagName && result.set({ tagName }, { ...opts, silent: true });
+    }
+
+    if (components) {
+      const newComponents = getComponentsFromDefs(components, all);
+
+      if (isFunction(result.components)) {
+        const cmps = result.components();
+        cmps.length > 0 && cmps.reset(newComponents, opts);
+      } else {
+        result.components = newComponents;
+      }
     }
 
     return result;
@@ -52,10 +65,12 @@ export default Backbone.Collection.extend({
   resetFromString(input = '', opts = {}) {
     opts.keepIds = getComponentIds(this);
     const { domc } = this;
-    const allByID = domc ? domc.allById() : {};
+    const allByID = domc?.allById() || {};
     const parsed = this.parseString(input, opts);
     const cmps = isArray(parsed) ? parsed : [parsed];
-    this.reset(cmps, opts);
+    const newCmps = getComponentsFromDefs(cmps, allByID, opts);
+    this.reset(newCmps, opts);
+    this.em?.trigger('component:content', this.parent, opts, input);
   },
 
   removeChildren(removed, coll, opts = {}) {
@@ -66,8 +81,7 @@ export default Backbone.Collection.extend({
     }
 
     const { domc, em } = this;
-    const allByID = domc ? domc.allById() : {};
-    const isTemp = opts.temporary;
+    const isTemp = opts.temporary || opts.fromUndo;
     removed.prevColl = this; // This one is required for symbols
 
     if (!isTemp) {
@@ -76,6 +90,7 @@ export default Backbone.Collection.extend({
       const sels = em.get('SelectorManager').getAll();
       const rules = em.get('CssComposer').getAll();
       const canRemoveStyle = (opts.keepIds || []).indexOf(id) < 0;
+      const allByID = domc ? domc.allById() : {};
       delete allByID[id];
 
       // Remove all component related styles
@@ -100,7 +115,6 @@ export default Backbone.Collection.extend({
 
       const inner = removed.components();
       inner.forEach(it => this.removeChildren(it, coll, opts));
-      // removed.empty(opts);
     }
 
     // Remove stuff registered in DomComponents.handleChanges

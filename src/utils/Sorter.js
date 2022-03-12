@@ -44,7 +44,7 @@ export default Backbone.View.extend({
     this.document = o.document || document;
     this.$document = $(this.document);
     this.dropContent = null;
-    this.em = o.em || '';
+    this.em = o.em || null;
     this.dragHelper = null;
     this.canvasRelative = o.canvasRelative || 0;
     this.selectOnEnd = !o.avoidSelectOnEnd;
@@ -84,7 +84,7 @@ export default Backbone.View.extend({
    * Triggered when the offset of the editro is changed
    */
   updateOffset() {
-    const offset = this.em.get('canvasOffset') || {};
+    const offset = this.em?.get('canvasOffset') || {};
     this.offTop = offset.top;
     this.offLeft = offset.left;
   },
@@ -99,7 +99,9 @@ export default Backbone.View.extend({
   },
 
   updateTextViewCursorPosition(e) {
-    const Canvas = this.em.get('Canvas');
+    const { em } = this;
+    if (!em) return;
+    const Canvas = em.get('Canvas');
     const targetDoc = Canvas.getDocument();
     let range = null;
 
@@ -304,8 +306,8 @@ export default Backbone.View.extend({
     this.onStart({
       sorter: this,
       target: srcModel,
-      parent: srcModel && srcModel.parent(),
-      index: srcModel && srcModel.index(),
+      parent: srcModel && srcModel.parent?.(),
+      index: srcModel && srcModel.index?.(),
     });
 
     // Avoid strange effects on dragging
@@ -1059,39 +1061,41 @@ export default Backbone.View.extend({
     const targetCollection = $(dst).data('collection');
     const { trgModel, srcModel, draggable } = validResult;
     const droppable = trgModel instanceof Backbone.Collection ? 1 : validResult.droppable;
-    let modelToDrop, modelTemp, created;
+    let modelToDrop, created;
 
     if (targetCollection && droppable && draggable) {
-      const opts = { at: index, noIncrement: 1 };
+      const opts = { at: index, action: 'move-component' };
+      const isTextable = this.isTextableActive(srcModel, trgModel);
 
       if (!dropContent) {
-        // Putting `avoidStore` here will make the UndoManager behave wrong
-        opts.temporary = 1;
-        modelTemp = targetCollection.add({}, { ...opts });
+        const srcIndex = srcModel.collection.indexOf(srcModel);
+        const sameCollection = targetCollection === srcModel.collection;
+        const sameIndex = srcIndex === index || srcIndex === index - 1;
+        const canRemove = !sameCollection || !sameIndex || isTextable;
 
-        if (srcModel.collection) {
-          modelToDrop = srcModel.collection.remove(srcModel, { temporary: 1 });
+        if (canRemove) {
+          modelToDrop = srcModel.collection.remove(srcModel, { temporary: true });
+          if (sameCollection && index > srcIndex) {
+            opts.at = index - 1;
+          }
         }
       } else {
         modelToDrop = isFunction(dropContent) ? dropContent() : dropContent;
-        opts.silent = false;
-        opts.avoidUpdateStyle = 1;
+        opts.avoidUpdateStyle = true;
+        opts.action = 'add-component';
       }
 
-      if (this.isTextableActive(srcModel, trgModel)) {
-        created = trgModel.getView().insertAtCursor(modelToDrop);
-      } else {
-        created = targetCollection.add(modelToDrop, opts);
+      if (modelToDrop) {
+        if (isTextable) {
+          delete opts.at;
+          created = trgModel.getView().insertComponent(modelToDrop, opts);
+        } else {
+          created = targetCollection.add(modelToDrop, opts);
+        }
       }
 
-      if (!dropContent) {
-        targetCollection.remove(modelTemp);
-      } else {
-        this.dropContent = null;
-      }
-
-      // This will cause to recalculate children dimensions
-      this.prevTarget = null;
+      this.dropContent = null;
+      this.prevTarget = null; // This will recalculate children dimensions
     } else if (em) {
       const dropInfo = validResult.dropInfo || trgModel?.get('droppable');
       const dragInfo = validResult.dragInfo || srcModel?.get('draggable');

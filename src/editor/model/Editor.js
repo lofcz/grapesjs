@@ -321,8 +321,22 @@ export default class EditorModel extends Model {
     multiple && this.removeSelected(selected.filter(s => !contains(els, s)));
 
     els.forEach(el => {
-      const model = getModel(el, $);
-      if (model && !model.get('selectable')) return;
+      let model = getModel(el);
+
+      if (model) {
+        this.trigger('component:select:before', model, opts);
+
+        // Check for valid selectable
+        if (!model.get('selectable') || opts.abort) {
+          if (opts.useValid) {
+            let parent = model.parent();
+            while (parent && !parent.get('selectable')) parent = parent.parent();
+            model = parent;
+          } else {
+            return;
+          }
+        }
+      }
 
       // Hanlde multiple selection
       if (ctrlKey && mltSel) {
@@ -386,6 +400,7 @@ export default class EditorModel extends Model {
       const selected = this.get('selected');
       opts.forceChange && this.removeSelected(model, opts);
       selected.addComponent(model, opts);
+      model && this.trigger('component:select', model, opts);
     });
   }
 
@@ -425,10 +440,31 @@ export default class EditorModel extends Model {
    * @private
    */
   setHovered(el, opts = {}) {
-    const model = getModel(el, $);
-    if (model && !model.get('hoverable')) return;
+    if (!el) return this.set('componentHovered', '');
+
+    const ev = 'component:hover';
+    let model = getModel(el);
+
+    if (!model) return;
+
     opts.forceChange && this.set('componentHovered', '');
-    this.set('componentHovered', model, opts);
+    this.trigger(`${ev}:before`, model, opts);
+
+    // Check for valid hoverable
+    if (!model.get('hoverable')) {
+      if (opts.useValid && !opts.abort) {
+        let parent = model && model.parent();
+        while (parent && !parent.get('hoverable')) parent = parent.parent();
+        model = parent;
+      } else {
+        return;
+      }
+    }
+
+    if (!opts.abort) {
+      this.set('componentHovered', model, opts);
+      this.trigger(ev, model, opts);
+    }
   }
 
   getHovered() {
@@ -521,13 +557,11 @@ export default class EditorModel extends Model {
    */
   getHtml(opts = {}) {
     const { config } = this;
-    const { optsHtml, exportWrapper, wrapperIsBody } = config;
+    const { optsHtml } = config;
     const js = config.jsInHtml ? this.getJs(opts) : '';
     const cmp = opts.component || this.get('DomComponents').getComponent();
     let html = cmp
       ? this.get('CodeManager').getCode(cmp, 'html', {
-          exportWrapper,
-          wrapperIsBody,
           ...optsHtml,
           ...opts,
         })
@@ -544,7 +578,7 @@ export default class EditorModel extends Model {
    */
   getCss(opts = {}) {
     const config = this.config;
-    const { optsCss, wrapperIsBody } = config;
+    const { optsCss } = config;
     const avoidProt = opts.avoidProtected;
     const keepUnusedStyles = !isUndefined(opts.keepUnusedStyles) ? opts.keepUnusedStyles : config.keepUnusedStyles;
     const cssc = this.get('CssComposer');
@@ -554,7 +588,6 @@ export default class EditorModel extends Model {
       wrp &&
       this.get('CodeManager').getCode(wrp, 'css', {
         cssc,
-        wrapperIsBody,
         keepUnusedStyles,
         ...optsCss,
         ...opts,
@@ -744,6 +777,11 @@ export default class EditorModel extends Model {
 
   getCurrentFrameModel() {
     return (this.getCurrentFrame() || {}).model;
+  }
+
+  getIcon(icon) {
+    const icons = this.getConfig('icons') || {};
+    return icons[icon] || '';
   }
 
   /**

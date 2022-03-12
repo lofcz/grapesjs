@@ -25,25 +25,60 @@ export default ComponentView.extend({
     !opts.fromDisable && this.disableEditing();
   },
 
+  canActivate() {
+    const { model, rteEnabled, em } = this;
+    const modelInEdit = em?.getEditing();
+    const sameInEdit = modelInEdit === model;
+    let result = true;
+    let isInnerText = false;
+    let delegate;
+
+    if (rteEnabled || !model.get('editable') || sameInEdit || (isInnerText = model.isChildOf('text'))) {
+      result = false;
+      // If the current is inner text, select the closest text
+      if (isInnerText && !model.get('textable')) {
+        let parent = model.parent();
+
+        while (parent && !parent.isInstanceOf('text')) {
+          parent = parent.parent();
+        }
+
+        if (parent && parent.get('editable')) {
+          delegate = parent;
+        } else {
+          result = true;
+        }
+      }
+    }
+
+    return { result, delegate };
+  },
+
   /**
    * Enable element content editing
    * @private
    * */
-  async onActive(e) {
+  async onActive(ev) {
     const { rte, em } = this;
+    const { result, delegate } = this.canActivate();
 
     // We place this before stopPropagation in case of nested
     // text components will not block the editing (#1394)
-    if (this.rteEnabled || !this.model.get('editable') || (em && em.isEditing())) {
+    if (!result) {
+      if (delegate) {
+        ev?.stopPropagation?.();
+        em.setSelected(delegate);
+        delegate.trigger('active', ev);
+      }
       return;
     }
 
-    e && e.stopPropagation && e.stopPropagation();
+    ev?.stopPropagation?.();
     this.lastContent = this.getContent();
 
     if (rte) {
       try {
-        this.activeRte = await rte.enable(this, this.activeRte);
+        this.activeRte = await rte.enable(this, this.activeRte, { event: ev });
       } catch (err) {
         em.logError(err);
       }
@@ -110,33 +145,11 @@ export default ComponentView.extend({
       comps.length && comps.reset(null, opts);
       model.set('content', content, contentOpt);
     } else {
-      const clean = model => {
-        const textable = !!model.get('textable');
-        const selectable = !['text', 'default', ''].some(type => model.is(type)) || textable;
-        model.set(
-          {
-            _innertext: !selectable,
-            editable: selectable && model.get('editable'),
-            selectable: selectable,
-            hoverable: selectable,
-            removable: textable,
-            draggable: textable,
-            highlightable: 0,
-            copyable: textable,
-            ...(!textable && { toolbar: '' }),
-          },
-          opts
-        );
-        model.get('components').each(model => clean(model));
-      };
-
-      comps.reset(content, opts);
-      comps.each(model => clean(model));
-      comps.trigger('resetNavigator');
+      comps.resetFromString(content, opts);
     }
   },
 
-  insertAtCursor(content) {
+  insertComponent(content, opts = {}) {
     const { model, el } = this;
     const doc = el.ownerDocument;
     const selection = doc.getSelection();
@@ -146,29 +159,31 @@ export default ComponentView.extend({
       const textNode = range.startContainer;
       const offset = range.startOffset;
       const textModel = getModel(textNode);
-      const cmps = model.components();
       const newCmps = [];
 
-      model.components().forEach(cmp => {
-        if (cmp === textModel) {
-          const cnt = cmp.get('content');
-          newCmps.push(cnt.slice(0, offset));
-          newCmps.push(content);
-          newCmps.push(cnt.slice(offset));
-        } else {
-          newCmps.push(cmp);
-        }
-      });
+      if (textModel && textModel.is?.('textnode')) {
+        const cmps = textModel.collection;
+        cmps.forEach(cmp => {
+          if (cmp === textModel) {
+            const type = 'textnode';
+            const cnt = cmp.get('content');
+            newCmps.push({ type, content: cnt.slice(0, offset) });
+            newCmps.push(content);
+            newCmps.push({ type, content: cnt.slice(offset) });
+          } else {
+            newCmps.push(cmp);
+          }
+        });
 
-      const result = newCmps.filter(Boolean);
-      const index = result.indexOf(content);
-      console.log({ newCmps, index, content });
-      cmps.reset(result);
+        const result = newCmps.filter(Boolean);
+        const index = result.indexOf(content);
+        cmps.reset(result, opts);
 
-      return cmps.at(index);
+        return cmps.at(index);
+      }
     }
 
-    return null;
+    return model.append(content, opts);
   },
 
   /**

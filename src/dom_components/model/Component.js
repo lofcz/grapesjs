@@ -1064,36 +1064,29 @@ export default class Component extends Model.extend(Styleable) {
     const model = this;
     const ppfx = (em && em.getConfig('stylePrefix')) || '';
 
-    if (!model.get('toolbar')) {
-      var tb = [];
-      if (model.collection) {
+    if (!model.get('toolbar') && em) {
+      const tb = [];
+      model.collection &&
         tb.push({
-          attributes: { class: 'fa fa-arrow-up' },
+          label: em.getIcon('arrowUp'),
           command: ed => ed.runCommand('core:component-exit', { force: 1 }),
         });
-      }
-      if (model.get('draggable')) {
+      model.get('draggable') &&
         tb.push({
-          attributes: {
-            class: `fa fa-arrows ${ppfx}no-touch-actions`,
-            draggable: true,
-          },
-          //events: hasDnd(this.em) ? { dragstart: 'execCommand' } : '',
+          attributes: { class: `${ppfx}no-touch-actions`, draggable: true },
+          label: em.getIcon('move'),
           command: 'tlb-move',
         });
-      }
-      if (model.get('copyable')) {
+      model.get('copyable') &&
         tb.push({
-          attributes: { class: 'fa fa-clone' },
+          label: em.getIcon('copy'),
           command: 'tlb-clone',
         });
-      }
-      if (model.get('removable')) {
+      model.get('removable') &&
         tb.push({
-          attributes: { class: 'fa fa-trash-o' },
+          label: em.getIcon('delete'),
           command: 'tlb-delete',
         });
-      }
       model.set('toolbar', tb);
     }
   }
@@ -1336,24 +1329,21 @@ export default class Component extends Model.extend(Styleable) {
    * */
   getName() {
     const { em } = this;
-    const { type, tagName } = this.attributes;
-    const cName = this.get('name');
-    const isDiv = tagName == 'div';
-    const tag = isDiv ? 'box' : tagName;
-    const defName = type || tag;
-    const nameTag = !type && tagName && !isDiv && tagName;
+    const { type, tagName, name } = this.attributes;
+    const defName = type || tagName;
+    const nameTag = !type && tagName;
     const i18nPfx = 'domComponents.names.';
-    const i18nName = cName && em && em.t(`${i18nPfx}${cName}`);
-    const i18nNameTag = nameTag && em && em.t(`${i18nPfx}${nameTag}`);
+    const i18nName = name && em?.t(`${i18nPfx}${name}`);
+    const i18nNameTag = nameTag && em?.t(`${i18nPfx}${nameTag}`);
     const i18nDefName = em && (em.t(`${i18nPfx}${type}`) || em.t(`${i18nPfx}${tagName}`));
     return (
       this.get('custom-name') || // Used in Layers (when the user changes the name)
-      i18nName ||
-      cName || // Component name (check if there is a i18n string for it)
-      i18nNameTag ||
-      capitalize(nameTag) || // Try name by tag if there is no valid type
-      i18nDefName ||
-      capitalize(defName) // Use the default name
+      i18nName || // Use local component `name` key (eg. `domComponents.names.myComponentName`)
+      name || // Use component `name` key
+      i18nNameTag || // Use local component `tagName` key (eg. `domComponents.names.div`)
+      capitalize(nameTag) || // Use component `tagName` key
+      i18nDefName || // Use local component `type` key (eg. `domComponents.names.image`)
+      capitalize(defName) // Use component `type` key
     );
   }
 
@@ -1686,7 +1676,7 @@ export default class Component extends Model.extend(Styleable) {
     const { em } = this;
     const coll = this.collection;
     const remove = () => {
-      coll && coll.remove(this, opts);
+      coll && coll.remove(this, { ...opts, action: 'remove-component' });
       opts.root && this.components('');
     };
     const rmOpts = { ...opts };
@@ -1709,6 +1699,61 @@ export default class Component extends Model.extend(Styleable) {
     this.remove({ temporary: 1 });
     component && component.append(this, opts);
     return this;
+  }
+
+  /**
+   * Check if the component is an instance of some component type.
+   * @param {String} type Component type
+   * @returns {Boolean}
+   * @example
+   * // Add a new component type by extending an existing one
+   * editor.Components.addType('text-ext', { extend: 'text' });
+   * // Append a new component somewhere
+   * const newTextExt = editor.getSelected().append({ type: 'text-ext' })[0];
+   * newTextExt.isInstanceOf('text-ext'); // true
+   * newTextExt.isInstanceOf('text'); // true
+   */
+  isInstanceOf(type) {
+    const cmp = this.em?.get('DomComponents').getType(type)?.model;
+
+    if (!cmp) return false;
+
+    return this instanceof cmp;
+  }
+
+  /**
+   * Check if the component is a child of some other component (or component type)
+   * @param {[Component]|String} component Component parent to check. In case a string is passed,
+   *  the check will be performed on the component type.
+   * @returns {Boolean}
+   * @example
+   * const newTextComponent = editor.getSelected().append({
+   *  type: 'text',
+   *  components: 'My text <b>here</b>',
+   * })[0];
+   * const innerComponent = newTextComponent.find('b')[0];
+   * innerComponent.isChildOf(newTextComponent); // true
+   * innerComponent.isChildOf('text'); // true
+   */
+  isChildOf(component) {
+    const byType = isString(component);
+    let parent = this.parent();
+
+    while (parent) {
+      if (byType) {
+        if (parent.isInstanceOf(component)) {
+          return true;
+        }
+      } else {
+        if (parent === component) {
+          return true;
+        }
+      }
+
+      parent = parent.parent();
+    }
+
+    return false;
   }
 
   /**
